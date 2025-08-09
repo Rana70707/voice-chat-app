@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>غرفة الدردشة الصوتية</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- صفحة الانضمام -->
+        <div class="join-container" id="joinContainer">
+            <h1>انضم إلى غرفة دردشة صوتية</h1>
+            <div style="margin: 30px 0;">
+                <input type="text" id="userName" class="input-field" placeholder="أدخل اسمك" required>
+                <input type="text" id="roomId" class="input-field" placeholder="معرف الغرفة (اتركه فارغاً لإنشاء غرفة جديدة)">
+            </div>
+            <button class="btn primary-btn" onclick="joinRoom()">انضم للغرفة</button>
+        </div>
+
+        <!-- غرفة الدردشة -->
+        <div class="room-container" id="roomContainer">
+            <div class="header">
+                <h1>غرفة الدردشة الصوتية</h1>
+                <div class="room-link" id="roomLink"></div>
+                <p>المتصلون: <span id="participantCount">0</span>/4</p>
+                <button class="btn leave-btn" onclick="leaveRoom()">مغادرة الغرفة</button>
+            </div>
+
+            <div class="participants-grid" id="participantsGrid">
+                <!-- سيتم إضافة المشاركين ديناميكياً -->
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
