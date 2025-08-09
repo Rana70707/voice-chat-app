@@ -7,6 +7,7 @@ let myUserId;
 let myUserName;
 let myStream;
 let peers = {};
+let isDemoMode = false;
 
 // Profanity filter components
 let speechRecognition;
@@ -17,9 +18,9 @@ let isFilterEnabled = true;
 // Profanity word list (Arabic and English)
 const profanityWords = [
     // Arabic profanity words (common inappropriate terms)
-    'كلب', 'حمار', 'غبي', 'احمق', 'لعين', 'وسخ', 'قذر', 'نذل',
+    'كلب', 'حمار', 'غبي', 'احمق', 'لعين', 'وسخ', 'قذر', 'نذل', 'خنزير', 'حقير',
     // English profanity words (common inappropriate terms)  
-    'damn', 'hell', 'stupid', 'idiot', 'jerk', 'fool', 'dumb', 'moron'
+    'damn', 'hell', 'stupid', 'idiot', 'jerk', 'fool', 'dumb', 'moron', 'hate', 'shut up'
 ];
 
 // Initialize application
@@ -149,6 +150,62 @@ function showProfanityWarning() {
     }, 3000);
 }
 
+async function joinDemoRoom() {
+    const userName = document.getElementById('userName').value.trim();
+    
+    if (!userName) {
+        alert('يرجى إدخال اسمك');
+        return;
+    }
+
+    isDemoMode = true;
+    myUserName = userName;
+    currentRoom = 'demo-room';
+    myUserId = 'demo-user-' + Math.random().toString(36).substring(7);
+    
+    // Show room interface for demo
+    showRoomInterface();
+    
+    // Start speech recognition for demo if available
+    if (speechRecognition && isFilterEnabled) {
+        speechRecognition.start();
+        showNotification('وضع التجربة: تحدث لاختبار فلتر الكلمات');
+    } else {
+        showNotification('وضع التجربة: اختبر الفلتر بالضغط على "اختبار كلمة غير لائقة"');
+    }
+    
+    // Add demo functionality
+    addDemoControls();
+}
+
+function addDemoControls() {
+    const myCard = document.getElementById('my-participant-card');
+    if (myCard) {
+        const controls = myCard.querySelector('.controls');
+        if (controls) {
+            controls.innerHTML += `
+                <button class="btn mic-btn" onclick="testProfanityFilter()" style="background-color: #ff9800; margin-left: 5px;">⚠️</button>
+            `;
+        }
+    }
+}
+
+function testProfanityFilter() {
+    // Simulate profanity detection
+    const testWords = ['كلب', 'stupid', 'احمق'];
+    const randomWord = testWords[Math.floor(Math.random() * testWords.length)];
+    
+    showNotification(`اختبار كشف الكلمة: "${randomWord}"`);
+    
+    setTimeout(() => {
+        if (isFilterEnabled) {
+            checkForProfanity(randomWord);
+        } else {
+            showNotification('الفلتر معطل - لم يتم حجب الكلمة');
+        }
+    }, 1000);
+}
+
 async function joinRoom() {
     const userName = document.getElementById('userName').value.trim();
     const roomId = document.getElementById('roomId').value.trim() || generateRoomId();
@@ -210,7 +267,7 @@ async function joinRoom() {
 
     } catch (error) {
         console.error('Error accessing microphone:', error);
-        alert('لا يمكن الوصول إلى الميكروفون. يرجى التأكد من الأذونات.');
+        alert('لا يمكن الوصول إلى الميكروفون. يرجى التأكد من الأذونات أو استخدم وضع التجربة.');
     }
 }
 
@@ -321,12 +378,19 @@ function showRoomInterface() {
     
     // Show room link
     const roomLink = document.getElementById('roomLink');
-    const currentUrl = `${window.location.origin}?room=${currentRoom}`;
-    roomLink.innerHTML = `
-        <strong>رابط الغرفة:</strong><br>
-        <span style="font-size: 12px;">${currentUrl}</span>
-        <button onclick="copyRoomLink()" style="margin-right: 10px; padding: 5px 10px; background-color: #e94560; color: white; border: none; border-radius: 5px; cursor: pointer;">نسخ</button>
-    `;
+    if (!isDemoMode) {
+        const currentUrl = `${window.location.origin}?room=${currentRoom}`;
+        roomLink.innerHTML = `
+            <strong>رابط الغرفة:</strong><br>
+            <span style="font-size: 12px;">${currentUrl}</span>
+            <button onclick="copyRoomLink()" style="margin-right: 10px; padding: 5px 10px; background-color: #e94560; color: white; border: none; border-radius: 5px; cursor: pointer;">نسخ</button>
+        `;
+    } else {
+        roomLink.innerHTML = `
+            <strong>وضع التجربة:</strong><br>
+            <span style="font-size: 12px;">اختبار فلتر الكلمات غير اللائقة</span>
+        `;
+    }
     
     // Add my own participant card
     createMyParticipantCard();
@@ -339,26 +403,38 @@ function createMyParticipantCard() {
     myCard.className = 'participant-card';
     myCard.id = 'my-participant-card';
     
+    const controlsHtml = isDemoMode ? 
+        `<div class="controls">
+            <button class="btn mic-btn" onclick="toggleProfanityFilter()" id="filterBtn" style="background-color: ${isFilterEnabled ? '#4CAF50' : '#f44336'}">🛡️</button>
+            <button class="btn mic-btn" onclick="testProfanityFilter()" style="background-color: #ff9800;">⚠️</button>
+        </div>` :
+        `<div class="controls">
+            <button class="btn mic-btn" id="micBtn" onclick="toggleMic()">🎤</button>
+            <button class="btn mic-btn" onclick="toggleProfanityFilter()" id="filterBtn" style="background-color: ${isFilterEnabled ? '#4CAF50' : '#f44336'}">🛡️</button>
+        </div>`;
+    
     myCard.innerHTML = `
         <div class="avatar">${myUserName.charAt(0).toUpperCase()}</div>
         <h3>${myUserName} (أنت)</h3>
-        <div class="status online">متصل</div>
-        <div class="controls">
-            <button class="btn mic-btn" id="micBtn" onclick="toggleMic()">🎤</button>
-            <button class="btn mic-btn" onclick="toggleProfanityFilter()" id="filterBtn" style="background-color: ${isFilterEnabled ? '#4CAF50' : '#f44336'}">🛡️</button>
-        </div>
+        <div class="status online">${isDemoMode ? 'وضع التجربة' : 'متصل'}</div>
+        ${controlsHtml}
         <div class="volume-indicator" id="volume-me"></div>
     `;
     
     participantsGrid.appendChild(myCard);
     
-    // Setup volume indicator for myself
-    if (myStream && audioContext) {
+    // Setup volume indicator for myself (only if not in demo mode)
+    if (myStream && audioContext && !isDemoMode) {
         setupVolumeIndicator({ srcObject: myStream }, 'me');
     }
 }
 
 function toggleMic() {
+    if (isDemoMode) {
+        showNotification('وضع التجربة: الميكروفون غير متاح');
+        return;
+    }
+    
     const micBtn = document.getElementById('micBtn');
     const audioTrack = myStream.getAudioTracks()[0];
     

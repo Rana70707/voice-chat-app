@@ -114,6 +114,11 @@ body {
     color: white;
 }
 
+.secondary-btn {
+    background-color: #95a5a6;
+    color: white;
+}
+
 .input-field {
     width: 100%;
     padding: 12px;

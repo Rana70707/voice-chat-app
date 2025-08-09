@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار فلتر الكلمات</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a2e;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .test-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #16213e;
+            padding: 30px;
+            border-radius: 15px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            border: none;
+            border-radius: 5px;
+            background-color: #e94560;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .result {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #0f3460;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>اختبار فلتر الكلمات غير اللائقة</h1>
+        <p>هذا اختبار بسيط للتحقق من عمل الفلتر</p>
+        
+        <div>
+            <button onclick="testArabicWord()">اختبار كلمة عربية</button>
+            <button onclick="testEnglishWord()">اختبار كلمة إنجليزية</button>
+            <button onclick="testCleanWord()">اختبار كلمة نظيفة</button>
+        </div>
+        
+        <div id="result" class="result" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Import profanity words from main app
+        const profanityWords = [
+            'كلب', 'حمار', 'غبي', 'احمق', 'لعين', 'وسخ', 'قذر', 'نذل', 'خنزير', 'حقير',
+            'damn', 'hell', 'stupid', 'idiot', 'jerk', 'fool', 'dumb', 'moron', 'hate', 'shut up'
+        ];
+
+        function checkForProfanity(text) {
+            return profanityWords.some(word => 
+                text.toLowerCase().includes(word.toLowerCase())
+            );
+        }
+
+        function showResult(text, isProfane) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            
+            if (isProfane) {
+                resultDiv.style.backgroundColor = '#f44336';
+                resultDiv.innerHTML = `
+                    <h3>⚠️ كلمة غير لائقة اكتُشفت!</h3>
+                    <p>النص: "${text}"</p>
+                    <p>سيتم تشغيل صوت التشويش</p>
+                `;
+                playBeep();
+            } else {
+                resultDiv.style.backgroundColor = '#4CAF50';
+                resultDiv.innerHTML = `
+                    <h3>✅ النص نظيف</h3>
+                    <p>النص: "${text}"</p>
+                    <p>لا يحتوي على كلمات غير لائقة</p>
+                `;
+            }
+        }
+
+        function playBeep() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                oscillator.type = 'sine';
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.5);
+            } catch (error) {
+                console.error('Error playing beep:', error);
+            }
+        }
+
+        function testArabicWord() {
+            const testWord = 'هذا كلب سيء';
+            const isProfane = checkForProfanity(testWord);
+            showResult(testWord, isProfane);
+        }
+
+        function testEnglishWord() {
+            const testWord = 'You are so stupid';
+            const isProfane = checkForProfanity(testWord);
+            showResult(testWord, isProfane);
+        }
+
+        function testCleanWord() {
+            const testWord = 'مرحبا كيف حالك اليوم؟';
+            const isProfane = checkForProfanity(testWord);
+            showResult(testWord, isProfane);
+        }
+    </script>
+</body>
+</html>
