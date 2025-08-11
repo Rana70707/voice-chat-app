@@ -1,2 +1,10 @@
-start=node server.js
-build=npm install
+services:
+  - type: web
+    name: voice-chat-app
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+    plan: free

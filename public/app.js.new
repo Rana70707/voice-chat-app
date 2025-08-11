@@ -1,0 +1,381 @@
+const socket = io('/');
+let peer = null;
+let currentRoom = null;
+let myStream = null;
+let myPeerId = null;
+let isMuted = false;
+let peerConnections = {};
+let remoteAudios = {};
+
+const badWords = ['كلب','زق','ملعون','حمار'];
+let recognition = null;
+let audioCtx = null;
+let lastBeep = 0;
+
+function initializePeer() {
+  if (peer) return Promise.resolve(myPeerId);
+
+  return new Promise((resolve) => {
+    if (peer) {
+      peer.destroy();
+    }
+
+    peer = new Peer(undefined, {
+      host: window.location.hostname,
+      secure: window.location.protocol === 'https:',
+      port: window.location.protocol === 'https:' ? undefined : (window.location.port || 80),
+      path: '/peerjs',
+      debug: 2,
+      config: { 
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ] 
+      }
+    });
+
+    peer.on('open', id => { 
+      console.log('PeerJS Connected, ID:', id);
+      myPeerId = id;
+      resolve(id);
+    });
+
+    peer.on('error', err => {
+      console.error('PeerJS Error:', err);
+      
+      if (err.type === 'network' || err.type === 'server-error') {
+        setTimeout(() => {
+          console.log('Retrying PeerJS connection...');
+          peer.destroy();
+          peer = null;
+          initializePeer();
+        }, 3000);
+      }
+    });
+
+    peer.on('call', handleIncomingCall);
+  });
+}
+
+function handleIncomingCall(call) {
+  console.log('Incoming call from', call.peer);
+  
+  if (!myStream) {
+    console.warn('No local stream to answer call');
+    return call.close();
+  }
+  
+  call.answer(myStream);
+  
+  peerConnections[call.peer] = call;
+  
+  call.on('stream', stream => {
+    console.log('Received stream from', call.peer);
+    attachRemoteAudio(call.peer, stream);
+  });
+  
+  call.on('close', () => {
+    console.log('Call closed with', call.peer);
+    removeAudio(call.peer);
+    delete peerConnections[call.peer];
+  });
+  
+  call.on('error', err => {
+    console.error('Call error with', call.peer, err);
+    removeAudio(call.peer);
+    delete peerConnections[call.peer];
+  });
+}
+
+function initAudioCtx() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function normalizeArabic(str='') {
+  return str.toLowerCase()
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g,'')
+    .replace(/[أإآا]/g,'ا')
+    .replace(/ى/g,'ي')
+    .replace(/ة/g,'ه')
+    .replace(/\s+/g,' ') 
+    .trim();
+}
+
+function containsBad(text) {
+  const n = normalizeArabic(text);
+  return badWords.some(w => n.includes(normalizeArabic(w)));
+}
+
+function playBeep() {
+  initAudioCtx();
+  const now = Date.now();
+  if (now - lastBeep < 600) return;
+  lastBeep = now;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.value = 900;
+  const t = audioCtx.currentTime;
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(0.4, t+0.01);
+  gain.gain.linearRampToValueAtTime(0, t+0.25);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(t+0.3);
+}
+
+function setupRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  recognition = new SR();
+  recognition.lang = 'ar-SA';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  let restartTO = null;
+  recognition.onresult = e => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join(' ');
+    if (containsBad(transcript)) {
+      playBeep();
+      if (currentRoom) socket.emit('censor-hit', currentRoom);
+    }
+  };
+  recognition.onend = () => { 
+    if (currentRoom) {
+      clearTimeout(restartTO);
+      restartTO = setTimeout(() => {
+        try { recognition.start(); } catch(_) { }
+      }, 400);
+    }
+  };
+  try { recognition.start(); } catch(_) { }
+}
+
+async function joinRoom() {
+  const userName = document.getElementById('userName').value.trim();
+  if (!userName) { alert('الرجاء إدخال اسمك'); return; }
+  let roomId = document.getElementById('roomId').value.trim();
+  if (!roomId) roomId = generateRoomId();
+  
+  try {
+    initAudioCtx();
+    
+    myPeerId = await initializePeer();
+    if (!myPeerId) {
+      alert('فشل الاتصال بخادم PeerJS. حاول مرة أخرى.');
+      return;
+    }
+    
+    console.log('Getting microphone access...');
+    myStream = await navigator.mediaDevices.getUserMedia({ 
+      video: false, 
+      audio: { 
+        echoCancellation: true, 
+        noiseSuppression: true, 
+        autoGainControl: true 
+      } 
+    });
+    console.log('Microphone access granted');
+    
+    // Set up the mute button now that we have a stream
+    document.getElementById('muteButton').addEventListener('click', toggleMute);
+    
+    // Start speech recognition for profanity filtering
+    setupRecognition();
+    
+    // Join the room via Socket.IO
+    socket.emit('join-room', { roomId, userName, peerId: myPeerId });
+    currentRoom = roomId;
+    
+    // Update UI to show room info
+    document.getElementById('roomDisplay').innerText = roomId;
+    document.getElementById('joinForm').style.display = 'none';
+    document.getElementById('roomControls').style.display = 'flex';
+    
+    // Handle room events
+    socket.on('user-connected', data => {
+      console.log('User connected to room:', data);
+      updateParticipantCount(data.count);
+      
+      if (data.user.peerId !== myPeerId) {
+        callPeer(data.user.peerId);
+      }
+    });
+    
+    socket.on('user-disconnected', data => {
+      console.log('User disconnected from room:', data);
+      updateParticipantCount(data.count);
+      
+      if (peerConnections[data.peerId]) {
+        peerConnections[data.peerId].close();
+        delete peerConnections[data.peerId];
+      }
+      
+      removeAudio(data.peerId);
+    });
+    
+    socket.on('censor-hit', () => {
+      playBeep();
+    });
+    
+    socket.on('room-full', () => {
+      alert('هذه الغرفة ممتلئة، الحد الأقصى 4 أشخاص');
+      leaveRoom();
+    });
+    
+    socket.on('room-users', data => {
+      console.log('Room users:', data);
+      updateParticipantCount(data.count);
+      
+      // Call each existing user in the room
+      data.users.forEach(user => {
+        if (user.peerId !== myPeerId && !peerConnections[user.peerId]) {
+          callPeer(user.peerId);
+        }
+      });
+    });
+    
+    window.addEventListener('beforeunload', leaveRoom);
+  } catch (err) {
+    console.error('Error joining room:', err);
+    alert('حدث خطأ أثناء محاولة الانضمام إلى الغرفة: ' + err.message);
+  }
+}
+
+function callPeer(peerId) {
+  console.log('Calling peer:', peerId);
+  
+  if (!myStream) {
+    console.error('Cannot call without local stream');
+    return;
+  }
+  
+  try {
+    const call = peer.call(peerId, myStream);
+    peerConnections[peerId] = call;
+    
+    call.on('stream', stream => {
+      console.log('Received stream from call to', peerId);
+      attachRemoteAudio(peerId, stream);
+    });
+    
+    call.on('close', () => {
+      console.log('Call closed with', peerId);
+      removeAudio(peerId);
+      delete peerConnections[peerId];
+    });
+    
+    call.on('error', err => {
+      console.error('Call error with', peerId, err);
+      removeAudio(peerId);
+      delete peerConnections[peerId];
+    });
+  } catch (err) {
+    console.error('Error calling peer:', peerId, err);
+  }
+}
+
+function attachRemoteAudio(peerId, stream) {
+  if (remoteAudios[peerId]) {
+    console.log('Audio already exists for', peerId);
+    return;
+  }
+  
+  const audio = document.createElement('audio');
+  audio.srcObject = stream;
+  audio.id = 'audio-' + peerId;
+  audio.autoplay = true;
+  
+  document.getElementById('remoteAudios').appendChild(audio);
+  remoteAudios[peerId] = audio;
+  
+  console.log('Added audio element for', peerId);
+}
+
+function removeAudio(peerId) {
+  const audio = remoteAudios[peerId];
+  if (audio) {
+    audio.srcObject = null;
+    audio.remove();
+    delete remoteAudios[peerId];
+    console.log('Removed audio element for', peerId);
+  }
+}
+
+function updateParticipantCount(count) {
+  document.getElementById('participantCount').innerText = count;
+}
+
+function toggleMute() {
+  if (!myStream) return;
+  
+  isMuted = !isMuted;
+  myStream.getAudioTracks().forEach(track => {
+    track.enabled = !isMuted;
+  });
+  
+  const muteButton = document.getElementById('muteButton');
+  muteButton.innerText = isMuted ? 'إلغاء كتم الصوت' : 'كتم الصوت';
+  muteButton.classList.toggle('muted', isMuted);
+}
+
+function leaveRoom() {
+  if (currentRoom) {
+    socket.emit('leave-room', currentRoom);
+    
+    Object.values(peerConnections).forEach(call => call.close());
+    peerConnections = {};
+    
+    Object.keys(remoteAudios).forEach(removeAudio);
+    remoteAudios = {};
+    
+    if (myStream) {
+      myStream.getTracks().forEach(track => track.stop());
+      myStream = null;
+    }
+    
+    if (recognition) {
+      recognition.stop();
+    }
+    
+    currentRoom = null;
+    
+    document.getElementById('joinForm').style.display = 'flex';
+    document.getElementById('roomControls').style.display = 'none';
+    document.getElementById('remoteAudios').innerHTML = '';
+  }
+}
+
+function generateRoomId() {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+function copyRoomLink() {
+  const roomId = document.getElementById('roomDisplay').innerText;
+  const link = window.location.origin + '?room=' + roomId;
+  
+  navigator.clipboard.writeText(link).then(() => {
+    alert('تم نسخ رابط الغرفة');
+  }).catch(err => {
+    console.error('Could not copy text:', err);
+    prompt('انسخ هذا الرابط:', link);
+  });
+}
+
+document.getElementById('joinButton').addEventListener('click', joinRoom);
+document.getElementById('leaveButton').addEventListener('click', leaveRoom);
+document.getElementById('copyLinkButton').addEventListener('click', copyRoomLink);
+
+// Check for room ID in URL when page loads
+window.addEventListener('DOMContentLoaded', () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const roomId = urlParams.get('room');
+  
+  if (roomId) {
+    document.getElementById('roomId').value = roomId;
+  }
+});
