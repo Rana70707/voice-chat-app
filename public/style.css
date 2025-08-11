@@ -43,7 +43,7 @@ body {
 
 .participants-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 20px;
     margin-bottom: 30px;
 }
@@ -157,4 +157,16 @@ body {
     border-radius: 8px;
     margin: 20px 0;
     word-break: break-all;
+}
+
+@media (max-width: 600px) {
+    .join-container {
+        margin: 40px 10px;
+    }
+
+    .avatar {
+        width: 70px;
+        height: 70px;
+        font-size: 28px;
+    }
 }

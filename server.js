@@ -1,66 +1,94 @@
 const express = require('express');
 const app = express();
-const server = require('http').Server(app);
-const io = require('socket.io')(server);
+const http = require('http');
+const server = http.createServer(app);
+const { Server } = require('socket.io');
+const io = new Server(server, { cors: { origin: '*'} });
 const { v4: uuidV4 } = require('uuid');
 const { ExpressPeerServer } = require('peer');
+const path = require('path');
 
-app.use(express.static('public'));
+// Security & rate-limit basics
+const censorHitsWindowMs = 5000; // 5s window
+const censorHitsLimit = 10; // max per window per socket
+const censorHitTracker = new Map(); // socket.id => {count, ts}
+
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// إعداد خادم WebRTC
-const peerServer = ExpressPeerServer(server, {
-    debug: true,
-    path: '/myapp'
-});
-
+// PeerJS server
+const peerServer = ExpressPeerServer(server, { debug: false, path: '/' });
 app.use('/peerjs', peerServer);
 
-// إضافة تتبع للأخطاء
+// Error handler
 app.use((err, req, res, next) => {
-    console.error('Error:', err);
-    res.status(500).send('حدث خطأ في الخادم');
+  console.error('Error:', err);
+  res.status(500).send('حدث خطأ في الخادم');
 });
 
-// التأكد من تحميل الصفحة الرئيسية
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Room structure: roomId => Map(userId => { userName, socketId })
 const rooms = new Map();
 
+function getParticipantCount(roomId) {
+  return rooms.get(roomId)?.size || 0;
+}
+
 io.on('connection', socket => {
-    socket.on('join-room', (roomId, userId, userName) => {
-        if (!rooms.has(roomId)) {
-            rooms.set(roomId, new Set());
-        }
-        
-        if (rooms.get(roomId).size >= 4) {
-            socket.emit('room-full');
-            return;
-        }
+  // join room
+  socket.on('join-room', (roomId, userId, userName) => {
+    if (!roomId || !userId || !userName) return;
 
-        socket.join(roomId);
-        rooms.get(roomId).add(userId);
-        
-        socket.to(roomId).emit('user-connected', userId, userName);
-        
-        io.to(roomId).emit('participant-count', rooms.get(roomId).size);
+    if (!rooms.has(roomId)) rooms.set(roomId, new Map());
 
-        socket.on('disconnect', () => {
-            rooms.get(roomId)?.delete(userId);
-            socket.to(roomId).emit('user-disconnected', userId);
-            if (rooms.get(roomId)?.size === 0) {
-                rooms.delete(roomId);
-            } else {
-                io.to(roomId).emit('participant-count', rooms.get(roomId).size);
-            }
-        });
+    const room = rooms.get(roomId);
+    if (room.size >= 4) {
+      socket.emit('room-full');
+      return;
+    }
+
+    room.set(userId, { userName, socketId: socket.id });
+    socket.join(roomId);
+
+    socket.to(roomId).emit('user-connected', userId, userName);
+    io.to(roomId).emit('participant-count', getParticipantCount(roomId));
+
+    socket.on('censor-hit', () => {
+      // Rate limiting
+      const now = Date.now();
+      const entry = censorHitTracker.get(socket.id) || { count: 0, ts: now };
+      if (now - entry.ts > censorHitsWindowMs) {
+        entry.count = 0;
+        entry.ts = now;
+      }
+      entry.count += 1;
+      censorHitTracker.set(socket.id, entry);
+      if (entry.count <= censorHitsLimit) {
+        socket.to(roomId).emit('censor-hit');
+      }
     });
+
+    socket.on('disconnect', () => {
+      const room = rooms.get(roomId);
+      if (room) {
+        room.delete(userId);
+        socket.to(roomId).emit('user-disconnected', userId);
+        if (room.size === 0) {
+          rooms.delete(roomId);
+        } else {
+          io.to(roomId).emit('participant-count', getParticipantCount(roomId));
+        }
+      }
+      censorHitTracker.delete(socket.id);
+    });
+  });
 });
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
-    console.log(`Open http://localhost:${PORT} in your browser`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Open http://localhost:${PORT} in your browser`);
 });

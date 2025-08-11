@@ -273,4 +273,3 @@ window.addEventListener('load', () => {
     document.getElementById('roomId').value = roomId;
   }
 });
-// new code goes here
